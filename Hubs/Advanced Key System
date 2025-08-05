@@ -1,0 +1,187 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local TweenService = game:GetService("TweenService")
+local Clipboard = setclipboard or toclipboard
+
+-- 🔑 Key pool 
+local KeyLinkPool = {
+	{Key = "Test123", Link = "https://pastebin.com/raw/test1"},
+	{Key = "Redz456", Link = "https://pastebin.com/raw/test2"},
+	{Key = "Skye789", Link = "https://pastebin.com/raw/test3"},
+	{Key = "Zeno999", Link = "https://pastebin.com/raw/test4"},
+}
+local LockedKey, LockedLink = nil, nil
+
+-- 🔗 External links
+local DiscordLink = "https://discord.gg/YOUR_INVITE"
+local YouTubeLink = "https://youtube.com/@YourChannel"
+
+-- 🧠 Script to execute on correct key
+local ScriptToExecute = "https://pastebin.com/raw/YOUR_SCRIPT_LINK"
+
+-- 🔊 Sound function
+local function playSound(id)
+	local s = Instance.new("Sound")
+	s.SoundId = "rbxassetid://" .. id
+	s.Volume = 1
+	s.PlayOnRemove = true
+	s.Parent = workspace
+	s:Destroy()
+end
+
+-- 🎨 GUI
+local gui = Instance.new("ScreenGui", LocalPlayer:WaitForChild("PlayerGui"))
+gui.Name = "ZenithKeyUI"
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+local main = Instance.new("Frame", gui)
+main.Size = UDim2.new(0, 300, 0, 270)
+main.Position = UDim2.new(0.5, -150, 0.5, -135)
+main.AnchorPoint = Vector2.new(0.5, 0.5)
+main.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+main.Active = true
+main.Draggable = true
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 10)
+
+-- 🔠 Title
+local title = Instance.new("TextLabel", main)
+title.Size = UDim2.new(1, 0, 0, 35)
+title.Position = UDim2.new(0, 0, 0, 5)
+title.Text = "Key System"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.BackgroundTransparency = 1
+title.Font = Enum.Font.GothamBlack
+title.TextScaled = true
+
+-- 🔳 Key Input
+local textbox = Instance.new("TextBox", main)
+textbox.PlaceholderText = "Enter Key Here"
+textbox.Size = UDim2.new(0.8, 0, 0, 35)
+textbox.Position = UDim2.new(0.1, 0, 0.25, 0)
+textbox.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+textbox.TextColor3 = Color3.new(1, 1, 1)
+textbox.Text = ""
+textbox.ClearTextOnFocus = false
+textbox.Font = Enum.Font.GothamBold
+Instance.new("UICorner", textbox).CornerRadius = UDim.new(0, 6)
+
+-- 🧱 Universal Button Creator
+local function makeButton(text, pos, callback)
+	local btn = Instance.new("TextButton", main)
+	btn.Text = text
+	btn.Size = UDim2.new(0.35, 0, 0, 35)
+	btn.Position = pos
+	btn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	btn.TextColor3 = Color3.new(1, 1, 1)
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 14
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+	local glow = Instance.new("UIStroke", btn)
+	glow.Thickness = 2
+	glow.Color = Color3.fromRGB(0, 170, 255)
+	glow.Transparency = 1
+	glow.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+
+	btn.MouseButton1Down:Connect(function()
+		local originalSize = btn.Size
+		local originalText = text
+
+		TweenService:Create(btn, TweenInfo.new(0.1), {Size = originalSize + UDim2.new(0, 5, 0, 5)}):Play()
+		playSound(4499400560)
+		TweenService:Create(glow, TweenInfo.new(0.15), {Transparency = 0}):Play()
+		task.wait(0.2)
+		TweenService:Create(glow, TweenInfo.new(0.2), {Transparency = 1}):Play()
+		TweenService:Create(btn, TweenInfo.new(0.1), {Size = originalSize}):Play()
+
+		callback(btn)
+
+		if btn.Text == "Copied ☑" then
+			task.delay(2, function()
+				if btn then btn.Text = originalText end
+			end)
+		end
+	end)
+end
+
+-- 🔐 Get Key
+makeButton("Get Key", UDim2.new(0.1, 0, 0.55, 0), function(btn)
+	local chosen = KeyLinkPool[math.random(1, #KeyLinkPool)]
+	LockedKey = chosen.Key
+	LockedLink = chosen.Link
+
+	if Clipboard then Clipboard(LockedLink) end
+	btn.Text = "Copied ☑"
+	playSound(17582299860)
+	game.StarterGui:SetCore("SendNotification", {
+		Title = "Link Copied",
+		Text = LockedLink,
+		Duration = 2
+	})
+end)
+
+-- ✅ Redeem
+makeButton("Redeem", UDim2.new(0.55, 0, 0.55, 0), function()
+	local input = textbox.Text
+	if not LockedKey then
+		game.StarterGui:SetCore("SendNotification", {
+			Title = "Get Key First",
+			Text = "Click Get Key first.",
+			Duration = 2
+		})
+		playSound(3774415505)
+		return
+	end
+
+	if input == LockedKey then
+		playSound(8486683243)
+		game.StarterGui:SetCore("SendNotification", {
+			Title = "Correct Key",
+			Text = "Executing script...",
+			Duration = 2
+		})
+		local success, err = pcall(function()
+			loadstring(game:HttpGet(ScriptToExecute))()
+		end)
+		if success then
+			gui:Destroy()
+		else
+			game.StarterGui:SetCore("SendNotification", {
+				Title = "Script Error",
+				Text = "Could not load script.",
+				Duration = 3
+			})
+		end
+	else
+		playSound(3774415505)
+		game.StarterGui:SetCore("SendNotification", {
+			Title = "Incorrect Key",
+			Text = "That key doesn't work.",
+			Duration = 2
+		})
+	end
+end)
+
+-- 💬 Discord
+makeButton("Discord", UDim2.new(0.1, 0, 0.78, 0), function(btn)
+	if Clipboard then Clipboard(DiscordLink) end
+	btn.Text = "Copied ☑"
+	playSound(17582299860)
+	game.StarterGui:SetCore("SendNotification", {
+		Title = "Discord Copied",
+		Text = "Join our server!",
+		Duration = 2
+	})
+end)
+
+-- 🔴 YouTube
+makeButton("YouTube", UDim2.new(0.55, 0, 0.78, 0), function(btn)
+	if Clipboard then Clipboard(YouTubeLink) end
+	btn.Text = "Copied ☑"
+	playSound(17582299860)
+	game.StarterGui:SetCore("SendNotification", {
+		Title = "YouTube Copied",
+		Text = "Check our content!",
+		Duration = 2
+	})
+end)
