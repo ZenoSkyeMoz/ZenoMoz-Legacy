@@ -1,0 +1,468 @@
+--// Moz Visions: Evolved v2.2 by Zyveth //
+--// Balanced Levels, Death Fix, GUI Mesh Spawner, Vision Overhaul
+
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local SoundService = game:GetService("SoundService")
+local Debris = game:GetService("Debris")
+
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+local char = player.Character or player.CharacterAdded:Wait()
+local HRP = char:WaitForChild("HumanoidRootPart")
+local humanoid = char:WaitForChild("Humanoid")
+local camera = workspace.CurrentCamera
+
+-- Clean previous
+if player.Backpack:FindFirstChild("MozVisions") then
+	player.Backpack.MozVisions:Destroy()
+end
+if Lighting:FindFirstChild("MozVisionFX") then
+	Lighting.MozVisionFX:Destroy()
+end
+
+-- Tool setup
+local Tool = Instance.new("Tool")
+Tool.Name = "MozVisions"
+Tool.RequiresHandle = false
+Tool.CanBeDropped = false
+Tool.Parent = player.Backpack
+
+-- State
+local active = false
+local lastToggle = 0
+local totalActiveTime = 0
+local level = 1
+local currentMusic = nil
+local espParts = {}
+local speedLoop = nil
+local allSounds = {}
+local finalBossTriggered = false
+local deathTriggered = false
+
+-- IDs
+local ToggleSoundId = "rbxassetid://979751563"
+local MusicByLevel = {
+	"rbxassetid://1843497734",       -- Level 1
+	"rbxassetid://78744747224727",   -- Level 2
+	"rbxassetid://72734512335337",   -- Level 3
+	"rbxassetid://1847157122"         -- Level 4
+}
+local FinalBossAnim = "rbxassetid://13716964686"
+local DeathAnim = "rbxassetid://12467789963"
+
+local Tints = {
+	Color3.fromRGB(255, 255, 150), -- Yellow
+	Color3.fromRGB(255, 170, 80),  -- Orange
+	Color3.fromRGB(255, 80, 80),   -- Red
+	Color3.fromRGB(100, 0, 0),     -- Dark Red
+}
+
+-- Tint FX
+local cc = Instance.new("ColorCorrectionEffect")
+cc.Name = "MozVisionFX"
+cc.TintColor = Tints[1]
+cc.Brightness = -0.1
+cc.Contrast = 0.2
+cc.Saturation = -0.2
+
+-- ESP
+local function addESP(character)
+	if espParts[character] then return end
+	if not character:IsA("Model") or not character:FindFirstChild("HumanoidRootPart") then return end
+	local hl = Instance.new("Highlight")
+	hl.Name = "MozESP"
+	hl.FillColor = Color3.new(1, 1, 1)
+	hl.OutlineColor = Color3.fromRGB(255, 85, 0)
+	hl.FillTransparency = 0.25
+	hl.OutlineTransparency = 0.1
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Adornee = character
+	hl.Parent = character
+	espParts[character] = hl
+end
+
+local function clearESP()
+	for _, esp in pairs(espParts) do
+		if esp and esp.Parent then esp:Destroy() end
+	end
+	espParts = {}
+end
+
+-- Music
+local function playMusic(id)
+	if currentMusic then
+		for i = 1, 10 do
+			currentMusic.Volume -= 0.1
+			wait(0.05)
+		end
+		currentMusic:Stop()
+		currentMusic:Destroy()
+	end
+	local s = Instance.new("Sound", camera)
+	s.SoundId = id
+	s.Looped = true
+	s.Volume = 0
+	s:Play()
+	currentMusic = s
+	for i = 1, 10 do
+		s.Volume += 0.1
+		wait(0.05)
+	end
+end
+
+-- Toggle SFX
+local function playToggleSound()
+	local s = Instance.new("Sound", HRP)
+	s.SoundId = ToggleSoundId
+	s.Volume = 1
+	s.PlayOnRemove = true
+	s:Destroy()
+end
+
+-- Mute Everything Except Vision
+local function muteWorld(mute)
+	for _, s in ipairs(workspace:GetDescendants()) do
+		if s:IsA("Sound") and s ~= currentMusic then
+			if mute then
+				s.Volume = 0
+				table.insert(allSounds, s)
+			else
+				if table.find(allSounds, s) then
+					s.Volume = 1
+				end
+			end
+		end
+	end
+end
+
+-- TPWalk
+local function startTPWalk()
+	if speedLoop then speedLoop:Disconnect() end
+	speedLoop = RunService.RenderStepped:Connect(function()
+		if not active then return end
+		local moveDir = humanoid.MoveDirection
+		if moveDir.Magnitude > 0 then
+			local speedBoost = 0
+			if level >= 2 then
+				speedBoost = (level - 1) * 0.5
+			end
+			HRP.CFrame = HRP.CFrame + (moveDir.Unit * (1 + speedBoost))
+		end
+	end)
+end
+
+local function stopTPWalk()
+	if speedLoop then speedLoop:Disconnect() speedLoop = nil end
+end
+
+-- Death Sequence
+local function triggerDeath()
+	if deathTriggered then return end
+	deathTriggered = true
+	humanoid.WalkSpeed = 0
+	humanoid.AutoRotate = false
+	local anim = Instance.new("Animation")
+	anim.AnimationId = DeathAnim
+	local track = humanoid:LoadAnimation(anim)
+	track:Play()
+	track.Stopped:Connect(function()
+		humanoid.Health = 0
+	end)
+end
+
+-- Final Boss Mode
+local function playFinalAnim()
+	if finalBossTriggered then return end
+	finalBossTriggered = true
+	humanoid.WalkSpeed = 0
+	humanoid.AutoRotate = false
+	local anim = Instance.new("Animation")
+	anim.AnimationId = FinalBossAnim
+	local track = humanoid:LoadAnimation(anim)
+	track:Play()
+	track.Stopped:Connect(function()
+		humanoid.WalkSpeed = 16
+		humanoid.AutoRotate = true
+	end)
+end
+
+-- Level Update
+local function updateLevel()
+	local newLevel = math.clamp(math.floor(totalActiveTime / 60) + 1, 1, 4)
+	if newLevel ~= level then
+		level = newLevel
+		TweenService:Create(cc, TweenInfo.new(0.5), {TintColor = Tints[level]}):Play()
+		TweenService:Create(camera, TweenInfo.new(0.5), {FieldOfView = 100 + level * 5}):Play()
+		playMusic(MusicByLevel[level])
+	end
+	if level == 4 then playFinalAnim() end
+end
+
+-- Toggle Vision
+local function toggle()
+	if tick() - lastToggle < 1 then return end
+	lastToggle = tick()
+	active = not active
+	playToggleSound()
+
+	if active then
+		cc.TintColor = Tints[level]
+		cc.Parent = Lighting
+		TweenService:Create(camera, TweenInfo.new(0.5), {FieldOfView = 100 + level * 5}):Play()
+		muteWorld(true)
+		for _, p in pairs(Players:GetPlayers()) do
+			if p ~= player and p.Character then
+				addESP(p.Character)
+			end
+		end
+		Players.PlayerAdded:Connect(function(p)
+			p.CharacterAdded:Connect(function(char)
+				task.wait(0.5)
+				addESP(char)
+			end)
+		end)
+		startTPWalk()
+		playMusic(MusicByLevel[level])
+		spawn(function()
+			while active do
+				task.wait(1)
+				totalActiveTime += 1
+				updateLevel()
+				if level == 4 and totalActiveTime % 120 == 0 then
+					triggerDeath()
+				end
+			end
+		end)
+	else
+		TweenService:Create(camera, TweenInfo.new(0.5), {FieldOfView = 70}):Play()
+		cc.Parent = nil
+		clearESP()
+		stopTPWalk()
+		muteWorld(false)
+		if currentMusic then
+			for i = 1, 10 do
+				currentMusic.Volume -= 0.1
+				wait(0.05)
+			end
+			currentMusic:Stop()
+			currentMusic:Destroy()
+			currentMusic = nil
+		end
+	end
+end
+
+Tool.Activated:Connect(toggle)-- ZenFlicker v3.2 - Orange Trail & Red Aura - FIXED by Zyveth --
+
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local Debris = game:GetService("Debris")
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+local char = player.Character or player.CharacterAdded:Wait()
+local HRP = char:WaitForChild("HumanoidRootPart")
+local humanoid = char:WaitForChild("Humanoid")
+local camera = workspace.CurrentCamera
+
+-- Clean up
+if player.Backpack:FindFirstChild("ZenFlicker") then
+	player.Backpack:FindFirstChild("ZenFlicker"):Destroy()
+end
+if Lighting:FindFirstChild("ZenGray") then
+	Lighting.ZenGray:Destroy()
+end
+
+-- Create Tool
+local Tool = Instance.new("Tool")
+Tool.Name = "ZenFlicker"
+Tool.RequiresHandle = false
+Tool.CanBeDropped = false
+Tool.Parent = player.Backpack
+
+-- Cooldown
+local cooldown = 2
+local lastUse = 0
+local DashAnims = {
+	"rbxassetid://17838006839",
+	"rbxassetid://12509505723"
+}
+local DashSoundId = "rbxassetid://2674547670"
+
+-- Grayscale FX
+local cc = Instance.new("ColorCorrectionEffect")
+cc.Name = "ZenGray"
+cc.Parent = Lighting
+
+-- Aura - Red Lightning
+local auraAttachment = Instance.new("Attachment", HRP)
+local aura = Instance.new("ParticleEmitter", auraAttachment)
+aura.Texture = "rbxassetid://248560923"
+aura.Rate = 50
+aura.Lifetime = NumberRange.new(0.25)
+aura.Speed = NumberRange.new(4, 7)
+aura.Size = NumberSequence.new(1)
+aura.LightEmission = 1
+aura.Color = ColorSequence.new(Color3.fromRGB(255, 30, 30))
+aura.Transparency = NumberSequence.new(0.1)
+aura.Enabled = true
+
+-- Orange Trail
+local function playTrail()
+	local a0 = Instance.new("Attachment", HRP)
+	local a1 = Instance.new("Attachment", HRP)
+
+	local trail = Instance.new("Trail")
+	trail.Attachment0 = a0
+	trail.Attachment1 = a1
+	trail.Color = ColorSequence.new(
+		Color3.fromRGB(255, 140, 0),
+		Color3.fromRGB(255, 60, 0)
+	)
+	trail.LightEmission = 1
+	trail.Lifetime = 0.2
+	trail.MinLength = 0.1
+	trail.Texture = "rbxassetid://1095708"
+	trail.WidthScale = NumberSequence.new(6)
+	trail.Transparency = NumberSequence.new(0.3)
+
+	trail.Parent = HRP
+	Debris:AddItem(trail, 0.3)
+	Debris:AddItem(a0, 0.3)
+	Debris:AddItem(a1, 0.3)
+end
+
+-- Particle Burst
+local function playBurst(position)
+	local p = Instance.new("Part")
+	p.Anchored = true
+	p.CanCollide = false
+	p.Transparency = 1
+	p.Position = position
+	p.Size = Vector3.new(1, 1, 1)
+	p.Parent = workspace
+
+	local emitter = Instance.new("ParticleEmitter", p)
+	emitter.Texture = "rbxassetid://243098098"
+	emitter.Lifetime = NumberRange.new(0.4)
+	emitter.Speed = NumberRange.new(40, 60)
+	emitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 8), NumberSequenceKeypoint.new(1, 0)})
+	emitter.Color = ColorSequence.new(Color3.fromRGB(255, 150, 50))
+	emitter.LightEmission = 1
+	emitter.RotSpeed = NumberRange.new(300)
+	emitter:Emit(200)
+
+	Debris:AddItem(p, 2)
+end
+
+-- Shockwave Ring
+local function playShockwave(position)
+	local ring = Instance.new("Part")
+	ring.Size = Vector3.new(1, 1, 1)
+	ring.Anchored = true
+	ring.CanCollide = false
+	ring.Transparency = 1
+	ring.Position = position
+	ring.Parent = workspace
+
+	local emitter = Instance.new("ParticleEmitter", ring)
+	emitter.Texture = "rbxassetid://12750460144"
+	emitter.Lifetime = NumberRange.new(0.3)
+	emitter.Size = NumberSequence.new({NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 15)})
+	emitter.Transparency = NumberSequence.new({NumberSequenceKeypoint.new(0, 0.2), NumberSequenceKeypoint.new(1, 1)})
+	emitter:Emit(1)
+
+	Debris:AddItem(ring, 2)
+end
+
+-- Light Flash
+local function flash(position)
+	local part = Instance.new("Part")
+	part.Anchored = true
+	part.CanCollide = false
+	part.Transparency = 1
+	part.Position = position
+	part.Parent = workspace
+
+	local light = Instance.new("PointLight", part)
+	light.Brightness = 10
+	light.Range = 15
+	light.Color = Color3.fromRGB(255, 100, 0)
+
+	Debris:AddItem(part, 0.5)
+end
+
+-- Sound
+local function playSound()
+	local s = Instance.new("Sound", HRP)
+	s.SoundId = DashSoundId
+	s.Volume = 1
+	s.PlayOnRemove = true
+	s:Destroy()
+end
+
+-- Cam FX
+local function camZoomGray()
+	local originalFOV = camera.FieldOfView
+	camera.FieldOfView = 100
+	cc.Saturation = -1
+	cc.Brightness = -0.3
+	cc.Contrast = 0.2
+
+	task.spawn(function()
+		local base = camera.CFrame
+		for i = 1, 10 do
+			camera.CFrame = base * CFrame.new(math.random(-1,1)*0.3, math.random(-1,1)*0.3, 0)
+			task.wait(0.015)
+		end
+		camera.CFrame = base
+	end)
+
+	task.delay(0.3, function()
+		for i = 1, 10 do
+			camera.FieldOfView -= (100 - originalFOV) / 10
+			cc.Saturation += 0.1
+			cc.Brightness += 0.03
+			cc.Contrast -= 0.02
+			task.wait(0.03)
+		end
+		camera.FieldOfView = originalFOV
+		cc.Saturation = 0
+		cc.Brightness = 0
+		cc.Contrast = 0
+	end)
+end
+
+-- ACTIVATE TOOL
+Tool.Activated:Connect(function()
+	if tick() - lastUse < cooldown then return end
+	lastUse = tick()
+
+	if not mouse.Hit then return end
+	local targetPos = mouse.Hit.Position + Vector3.new(0, 3, 0)
+
+	-- PRE FX
+	playBurst(HRP.Position)
+	playShockwave(HRP.Position)
+	flash(HRP.Position)
+	playTrail()
+	camZoomGray()
+
+	-- Animation
+	local anim = Instance.new("Animation")
+	anim.AnimationId = DashAnims[math.random(1, #DashAnims)]
+	local track = humanoid:LoadAnimation(anim)
+	track:Play()
+
+	-- Teleport
+	HRP.CFrame = CFrame.new(targetPos)
+
+	-- POST FX
+	task.wait(0.05)
+	playBurst(HRP.Position)
+	playShockwave(HRP.Position)
+	flash(HRP.Position)
+	playTrail()
+	playSound()
+end)
